@@ -1,0 +1,500 @@
+---
+title: "Natural Disaster Occurrence in the US from 2000-2019"
+subtitle: |
+  | Final Project
+  | Data Science 1 with R (STAT 301-1)
+author: "Julia Nelson"
+date: 12/6/2023
+
+format:
+  html:
+    toc: true
+    embed-resources: true
+    
+execute:
+  echo: true
+  warning: false
+
+from: markdown+emoji 
+---
+
+```{r}
+#| echo: false
+#| message: false
+
+library(tidyverse)
+library(png)
+library(grid)
+nat_haz <- read_csv("data/nat_haz.csv")
+nat_haz_longer <- read_csv("data/nat_haz_longer.csv")
+```
+
+::: {.callout-tip icon="false"}
+## Github Repo Link
+
+<https://github.com/stat301-1-2023-fall/final-project-1-nelson-julia.git>
+:::
+
+## Introduction
+
+My dataset describes the percent area of each US county that was exposed to each of nine natural disasters (hurricanes, tropical storms, tornadoes, landslides, wildfires, drought, coastal and inland flooding, and earthquakes) during each year from 2000 to 2019. The data is sourced from the US Environmental Protection Agency (EPA) Office of Research and Development.[^1]
+
+[^1]: https://catalog.data.gov/dataset/climate-history-extensions. Associated with the following publication: Summers, J., A. Lamper, C. Mcmillion, and L. Harwell. Observed Changes in the Frequency, Intensity, and Spatial Patterns of Nine Natural Hazards in the United States from 2000 to 2019. Sustainability. MDPI, Basel, Switzerland, 14(7): 4158, (2022).
+
+I am a Biological Sciences major, and I also considered a major in Environmental Science at one point, so I have significant interests in human health, the environment, and scientific data. I'm interested in measuring the impacts of climate change, including natural disasters. Analysis of this data also allows scientists to predict how different parts of the country will be impacted by natural disasters in the future and which regions are most susceptible.
+
+I will use this data to determine how the frequency of natural disasters differs by region, where each natural disaster is most common, and if/how the frequency of natural disasters has changed over the past two decades.
+
+## Data Overview & Quality
+
+The dataset initially contained 21 variables and 64,400 observations. There were 8 categorical variables (including numerical codes such as state IDs), 12 numerical variables, and 1 variable that was just an "object ID" or count of each position.
+
+I deleted five variables that were unnecessary for my data analysis, such as a variable providing a federal code for each county. I also added two variables: `division` describes a specific region of the country, while `region` describes a general region of the country, both as defined by the US Census Bureau. The cleaned final dataset contains 18 variables and 64,400 observations. There are 5 categorical variables and 13 numerical variables.
+
+To perform some of the data analyses more easily, I created a longer version of the dataset. I moved the disaster types into a variable called `disaster` and their corresponding percent area values into a variable called `percent_area`.
+
+There are some missingness issues. Notably, missing values in the natural hazard categories (hurricane, tornado, etc.) were denoted with `-999`. I changed these values to `NA`, and in some situations changed them to `0` to make data analyses easier. There were patterns of missingness in the dataset that I had to keep in mind when performing analyses: `tornado` and `landslide` are missing data from 2019, `earthquake` is missing data from 2000-15 and 2019, and `coastal_flooding` and `inland_flooding` only have data for 2019.
+
+## Explorations
+
+### *Exploration 1*
+
+My first research question is how frequent are natural disasters by region? Since the dataset covers a 20 year timespan from 2000-2019, I decided to focus on data from 2019 for this question.
+
+As the dataset is organized at the county level, I found the number of counties per region. I also found the total geographic area of each region (in km\^2).
+
+```{r}
+#| echo: false
+#| message: false
+
+county_by_reg <- nat_haz |>
+                  filter(year == 2019) |>
+                  summarize(counties = n(),
+                            total_area = sum(county_area),
+                            .by = region)
+
+county_by_reg |> knitr::kable()
+```
+
+The data show a discrepancy between the size of each region and the number of counties per region. The West is twice as large as any of the other regions, but has the second-fewest number of counties. Additionally, counties aren't uniformly sized. Looking at the occurrence of natural disasters by county may not be the most accurate way to measure their frequency.
+
+I measured frequency by determining the number of counties per region affected by natural disasters. I considered a county to be affected if its percent area affected was greater than 0% for any natural disaster, and unaffected otherwise.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz |>
+  filter(year == 2019) |>
+  mutate(affected = case_when(hurricane > 0 |
+                              tropical_storm > 0 |
+                              tornado > 0 |
+                              landslide > 0 |
+                              wildfire > 0 |
+                              drought > 0 |
+                              coastal_flooding > 0 |
+                              inland_flooding > 0 |
+                              earthquake > 0 ~ TRUE,
+                              .default = FALSE)) |>
+         ggplot(aes(x = region,
+                    fill = affected)) +
+         geom_bar() +
+         labs(title = "US Counties Affected by Natural Disasters by Region",
+              subtitle = "Affected counties experienced at least 1 natural disaster in part of the county",
+              x = "Region",
+              y = "# Counties",
+              fill = "County Affected")
+```
+
+Nearly all counties were affected by natural disasters to some extent. However, while some of these counties were completely affected by natural disasters, only a small portion of other counties was affected.
+
+I also measured the frequency of natural disasters by determining the size of each county. The dataset doesn't contain the proportion of each county affected by any natural disaster, just the proportion affected by each natural disaster. Different natural disasters can overlap in geographic area, or cover completely different areas. To obtain an upper estimate of natural disaster occurrence, I multiplied the size of each county by the sum of natural disaster occurrence. To obtain a lower estimate, I multiplied the size of each county by the largest proportion of occurrence among the nine natural disasters. Then I determined the total area of each region affected by natural disasters.
+
+```{r}
+#| echo: false
+#| message: false
+
+# natural disaster occurrence by region --> by geog area
+# adding up %s from each natural disaster
+# upper estimate
+disaster_by_region_1 <- nat_haz |>
+                          filter(year == 2019) |>
+                          mutate_all(~replace(., is.na(.), 0)) |>
+                          mutate(summ = hurricane + tropical_storm + tornado + landslide + wildfire + drought + coastal_flooding + inland_flooding + earthquake,
+                                 summ = summ / 100,
+                                 summ = case_when(summ > 1 ~ 1,
+                                           .default = summ),
+                                 affected_area = summ * county_area) |>
+                                 summarize(affected_area = sum(affected_area), 
+                                           percent_affected_area = sum(affected_area) / sum(county_area),
+                                           .by = region)
+
+disaster_by_region_1 |> knitr::kable()
+
+# finding biggest % from 1 natural disaster & using that
+# lower estimate
+disaster_by_region_2 <- nat_haz |>
+                          filter(year == 2019) |>
+                          mutate_all(~replace(., is.na(.), 0)) |>
+                          mutate(highest_val = hurricane,
+                                 highest_val = if_else(tropical_storm > highest_val, tropical_storm, highest_val),
+                                 highest_val = if_else(tornado > highest_val, tornado, highest_val),
+                                 highest_val = if_else(landslide > highest_val, landslide, highest_val),
+                                 highest_val = if_else(wildfire > highest_val, wildfire, highest_val),
+                                 highest_val = if_else(drought > highest_val, drought, highest_val),
+                                 highest_val = if_else(coastal_flooding > highest_val, coastal_flooding, highest_val),
+                                 highest_val = if_else(inland_flooding > highest_val, inland_flooding, highest_val),
+                                 highest_val = if_else(earthquake > highest_val, earthquake, highest_val),
+                                 highest_val = highest_val / 100,
+                                 affected_area = highest_val * county_area) |>
+                          summarize(affected_area = sum(affected_area), 
+                                    percent_affected_area = sum(affected_area) / sum(county_area),
+                                    .by = region)
+
+disaster_by_region_2 |> knitr::kable()
+
+```
+
+The two tables have similar values, suggesting that most natural disasters don't overlap in geographic area. A smaller proportion of the US was affected by natural disasters than the by-county data would suggest, and this proportion varied greatly by region. Most of the South, around 80%, was affected by natural disasters, while around 60% of the Midwest and Northeast were affected, and only about 30% of the Midwest was affected.
+
+### *Exploration 2*
+
+My second research question is which regions, divisions, and states are most affected by each natural disaster. I also focused on data from 2019 to answer this question.
+
+I found the total area and the percent area of each region affected by each natural disaster.
+
+```{r}
+#| echo: false
+#| message: false
+
+# area of each region affected
+nat_haz_longer |>
+  filter(year == 2019) |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(percent_area = percent_area / 100,
+         affected_area = percent_area * county_area) |>
+  summarize(affected_area = sum(affected_area), 
+            percent_affected_area = sum(affected_area) / sum(county_area) * 100,
+            .by = c(disaster, region)) |>
+  arrange(disaster, region, affected_area, percent_affected_area) |>
+  knitr::kable()
+```
+
+The data show that coastal flooding most affected the South (\~5% area), drought most affected the West (\~5% area), hurricanes only affected the South (\~12% area), and tropical storms only affected the South (\~8% area). Inland flooding affected all four regions (\~59% Midwest, \~63% Northeast, \~74% South, & \~26% West).
+
+Earthquakes, landslides, tornadoes, and wildfires are shown to not have affected any region. This isn't because they didn't occur, but because the dataset doesn't include data on tornadoes, landslides, and earthquakes for 2019. The dataset should include data for wildfires in 2019, and it is unclear why this data is absent in the summary. It's possible that 2019 wildfire data was omitted but not marked as such.
+
+Since there isn't data for earthquakes, landslides, and tornadoes for 2019, and possibly not data for wildfires either, I looked at 2018 data for these variables to determine the total area and percent area of each region affected by each natural disaster.
+
+```{r}
+#| echo: false
+#| message: false
+
+# area of each region affected
+nat_haz_longer |>
+  filter(year == 2018,
+         disaster == "earthquake" | 
+         disaster == "landslide" | 
+         disaster == "tornado" |
+         disaster == "wildfire") |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(percent_area = percent_area / 100,
+         affected_area = percent_area * county_area) |>
+  summarize(affected_area = sum(affected_area), 
+            percent_affected_area = sum(affected_area) / sum(county_area) * 100,
+            .by = c(disaster, region)) |>
+  arrange(disaster, region, affected_area, percent_affected_area) |>
+  knitr::kable()
+```
+
+The data show that earthquakes most affected the West (\~9% area) and wildfires also most affected the West (\~0.4% area). Tornadoes and landslides didn't affect any region to a great extent (\<0.05% area for both), so I won't focus on them.
+
+I looked at the impact of coastal flooding, hurricanes, and tropical storms on the South to determine where in the South these generally occurred.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz_longer |>
+  filter(year == 2019, 
+         disaster == "coastal_flooding",
+         region == "South") |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(percent_area = percent_area,
+         affected_area = percent_area * county_area) |>
+  summarize(affected_area = sum(affected_area), 
+            percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = c(state)) |>
+  arrange(desc(percent_affected_area)) |>
+  ggplot(aes(x = state, y = percent_affected_area)) +
+  geom_col(fill = "dodgerblue") +
+  labs(title = "Percent Area of Southern States Affected by Coastal Flooding",
+       subtitle = "In 2019",
+       x = "State",
+       y = "% Area Affected")
+```
+
+Florida and Louisiana were most affected by coastal flooding in 2019, which makes sense since they both have large coastlines. The other states affected by coastal flooding were also coastal, while the states with no coastal flooding aren't coastal.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz_longer |>
+  filter(year == 2019, 
+         disaster == "hurricane",
+         region == "South") |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(percent_area = percent_area,
+         affected_area = percent_area * county_area) |>
+  summarize(affected_area = sum(affected_area), 
+            percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = c(state)) |>
+  ggplot(aes(x = state, y = percent_affected_area)) +
+  geom_col(fill = "dodgerblue") +
+  labs(title = "Percent Area of Southern States Affected by Hurricanes",
+       subtitle = "In 2019",
+       x = "State",
+       y = "% Area Affected")
+```
+
+Nearly all of Puerto Rico was affected by hurricanes in 2019, likely because it's a small island without a large inland area. Louisiana, North Carolina, South Carolina, and Florida --- all states with large coastlines --- were also signficantly affected by hurricanes. Other states were not majorly affected.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz_longer |>
+  filter(year == 2019, 
+         disaster == "tropical_storm",
+         region == "South") |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(percent_area = percent_area,
+         affected_area = percent_area * county_area) |>
+  summarize(affected_area = sum(affected_area), 
+            percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = c(state)) |>
+  ggplot(aes(x = state, y = percent_affected_area)) +
+  geom_col(fill = "dodgerblue") +
+  labs(title = "Percent Area of Southern States Affected by Tropical Storms",
+       subtitle = "In 2019",
+       x = "State",
+       y = "% Area Affected")
+```
+
+Louisiana and Puerto Rico were most affected by tropical storms. Both were also affected by coastal flooding and hurricanes, so there is likely a correlation between the occurrences of the three natural disasters. Hurricanes and tropical storms may cause coastal flooding, for instance. Other states were not majorly affected.
+
+I looked at the impact of drought, earthquakes, and wildfires on the West to determine where in the West these generally occurred.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz_longer |>
+  filter(year == 2019, 
+         disaster == "drought",
+         region == "West") |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(percent_area = percent_area,
+         affected_area = percent_area * county_area) |>
+  summarize(affected_area = sum(affected_area), 
+            percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = c(state)) |>
+  ggplot(aes(x = state, y = percent_affected_area)) +
+  geom_col(fill = "dodgerblue") +
+  labs(title = "Percent Area of Western States Affected by Drought",
+       subtitle = "In 2019",
+       x = "State",
+       y = "% Area Affected")
+```
+
+Less than 20% of each state experienced drought in 2019. 14-19% of Arizona, Colorado, New Mexico, Oregon, and Utah experienced drought. Less than 10% of each other states experienced drought.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz_longer |>
+  filter(year == 2018, 
+         disaster == "earthquake",
+         region == "West") |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(percent_area = percent_area,
+         affected_area = percent_area * county_area) |>
+  summarize(affected_area = sum(affected_area), 
+            percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = c(state)) |>
+  ggplot(aes(x = state, y = percent_affected_area)) +
+  geom_col(fill = "dodgerblue") +
+  labs(title = "Percent Area of Western States Affected by Earthquakes",
+       subtitle = "In 2018",
+       x = "State",
+       y = "% Area Affected")
+```
+
+California was most affected by earthquakes in 2018, with around 2/3 of the state experiencing them. Around 22% of Washington and 15% of Nevada experienced earthquakes. Less than 5% of any other state experienced earthquakes.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz_longer |>
+  filter(year == 2018, 
+         disaster == "wildfire",
+         region == "West") |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(percent_area = percent_area,
+         affected_area = percent_area * county_area) |>
+  summarize(affected_area = sum(affected_area), 
+            percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = c(state)) |>
+  ggplot(aes(x = state, y = percent_affected_area)) +
+  geom_col(fill = "dodgerblue") +
+  labs(title = "Percent Area of Western States Affected by Wildfires",
+       subtitle = "In 2018",
+       x = "State",
+       y = "% Area Affected")
+```
+
+California, Nevada, and Idaho were most affected by wildfires in 2018. Over 1.5% of California and Nevada, as well as over 1% of Idaho, experienced wildfires. Less than 1% of each other state was affected by wildfires.
+
+I looked at the impact of inland flooding on the entire country, as all four regions experienced a significant amount of inland flooding. Instead of looking at each state individually, which would be difficult since there are 52 states and territories in the dataset, I looked at divisions -- regions divided into smaller groups of about 5 states each.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz_longer |>
+  filter(year == 2019, 
+         disaster == "inland_flooding") |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(division = fct_recode(division, "NE Central" = "East North Central",
+                                         "SE Central" = "East South Central",
+                                         "Mid Atlantic" = "Middle Atlantic",
+                                         "S Atlantic" = "South Atlantic",
+                                         "NW Central" = "West North Central",
+                                         "SW Central" = "West South Central"),
+         percent_area = percent_area,
+         affected_area = percent_area * county_area) |>
+  summarize(affected_area = sum(affected_area), 
+            percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = c(division)) |>
+  ggplot(aes(x = division, y = percent_affected_area)) +
+  geom_col(fill = "dodgerblue") +
+  labs(title = "Percent Area of US Divisions Affected by Inland Flooding",
+       subtitle = "In 2019",
+       x = "Division",
+       y = "% Area Affected")
+```
+
+The East South Central and South Atlantic divisions, which contain the Southern states east of the Mississippi River, were almost entirely affected by inland flooding in 2019. The East North Central and Middle Atlantic divisions, which contain the Great Lakes states, were around 75% affected by inland flooding. The West North and West South Central divisions, which contain the Midwestern and Southern states west of the Mississippi, as well as the New England division were around 50% affected by inland flooding. The Mountain and Pacific divisions, which comprise the West region, were least affected by inland flooding. This makes sense, as the West also experienced the most drought.
+
+### *Exploration 3*
+
+My third research question is how the frequency of natural disasters has changed over time. I used data from 2000-2019 to answer this question.
+
+I first determined what percent area of the US was impacted by natural disasters from 2000-2019.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(summ = hurricane + tropical_storm + tornado + landslide + wildfire + drought + coastal_flooding + inland_flooding + earthquake,
+         summ = summ / 100,
+         summ = case_when(summ > 1 ~ 1,
+                          .default = summ),
+         affected_area = summ * county_area) |>
+  summarize(percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = year) |>
+  ggplot(aes(x = year, y = percent_affected_area)) +
+  geom_col(fill = "salmon") +
+  labs(title = "Percent Area of US Affected by Natural Disasters",
+       subtitle = "From 2000-2019",
+       x = "Year",
+       y = "% Area Affected")
+
+```
+
+There hasn't been a steady increase in natural disasters from 2000-2019. Instead, the area of the US affected by natural disasters has fluctuated. However, a significantly greater area expected natural disasters in 2019 than in any other year - over half of the country. Less than a third of the country experienced natural disasters in any other year.
+
+I further broke down the analysis by region and disaster type.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(summ = hurricane + tropical_storm + tornado + landslide + wildfire + drought + coastal_flooding + inland_flooding + earthquake,
+         summ = summ / 100,
+         summ = case_when(summ > 1 ~ 1,
+                          .default = summ),
+         affected_area = summ * county_area) |>
+  summarize(percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = c(year, region)) |>
+  ggplot(aes(x = year, y = percent_affected_area)) +
+  geom_col(fill = "salmon") +
+  facet_wrap(~region) +
+  labs(title = "Percent Area of US Regions Affected by Natural Disasters",
+       subtitle = "By Disaster from 2000-2019",
+       x = "Year",
+       y = "% Area Affected")
+```
+
+On average, the South and West experience more natural disasters than the Midwest and Northeast. 2019 is an outlier, as the West has similar natural disaster occurrence comparable to previous years while the other regions all have much higher occurrence than any other year.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz_longer |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(percent_area = percent_area / 100,
+         affected_area = percent_area * county_area) |>
+  summarize(percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = c(year, disaster)) |>
+  ggplot(aes(x = year, y = percent_affected_area)) +
+  geom_col(fill = "salmon") +
+  facet_wrap(~disaster) +
+  labs(title = "Percent Area of US Affected by Natural Disasters",
+       subtitle = "From 2000-2019",
+       x = "Year",
+       y = "% Area Affected")
+```
+
+The occurrence of drought, hurricanes, and tropical storms is fairly constant from 2000-2019 with no clear pattern. Landslides, tornadoes, and wildfires were consistently infrequent from 2000-2019. Earthquakes from 2000-2015 or 2019 weren't included in the data, so trends can't be determined. Coastal flooding and inland flooding were only measured in 2019, so it's unclear how much flooding occurred in previous years and whether 2019 was an outlier. The inclusion of this data for only 2019 may have also made it seem as though 2019 experienced more natural disasters than any other year even if that was not actually the case.
+
+I recreated the graph showing what percent area of the US was impacted by natural disasters from 2000-2019, but this time I excluded inland and coastal flooding since they likely skewed the data.
+
+```{r}
+#| echo: false
+#| message: false
+
+nat_haz |>
+  mutate_all(~replace(., is.na(.), 0)) |>
+  mutate(summ = hurricane + tropical_storm + tornado + landslide + wildfire + drought + earthquake,
+         summ = summ / 100,
+         summ = case_when(summ > 1 ~ 1,
+                          .default = summ),
+         affected_area = summ * county_area) |>
+  summarize(percent_affected_area = sum(affected_area) / sum(county_area),
+            .by = year) |>
+  ggplot(aes(x = year, y = percent_affected_area)) +
+  geom_col(fill = "salmon") +
+  labs(title = "Percent Area of US Affected by Natural Disasters",
+       subtitle = "From 2000-2019",
+       x = "Year",
+       y = "% Area Affected")
+```
+
+The data for 2019 looks dramatically different after making this edit. Without considering flooding, the percent area of the US affected by natural disasters in 2019 shrank from over 50% to less than 10%. This percent area is actually smaller than that of most other years. In terms of natural disaster occurrence, 2019 was much more normal than the previous data analysis might suggest.
+
+## Conclusion
+
+The purpose of the report was to find the frequency of natural disasters by region, determine where each natural disaster is most common, and see if/how the frequency of natural disasters has changed over the past two decades.
+
+I found that natural disasters affect the South more than any other region, and the Midwest less than any other region. This was expected, as the South is known to experience hurricanes and storms that largely spare other parts of the country, and the Midwest is known for its low rate of natural disasters. Coastal flooding, hurricanes, and tropical storms affect the South most; drought, earthquakes, and wildfires affect the West most; inland flooding affects all four regions; and tornadoes and landslides don't have a large effect on any region. These results were also as expected, as different disasters are more likely to occur in different climates, such as wildfires being more common in dry states and hurricanes being more common in coastal states. Notably, I found that the percent area of the US affected by natural disasters didn't significantly change from 2000 to 2019. I expected that this value would increase, since climate change is known to worsen both the frequency and severity of natural disasters.
+
+More data analysis will have to be performed to better understand natural disaster trends and patterns. Next steps could include taking a more thorough look at where natural disasters occur. This could be done by looking at the data at a county level, to determine where within states each natural disaster occurs. Other geographic and meteorologic data, such as information about elevation, landforms, and precipitation could be incorporated to help explain why natural disasters occur where they do. Whether there is a correlation between the occurrence of different natural disasters could also be explored. Additionally, while the percent area of the US affected by natural disasters didn't change significantly, the frequency of disasters within a region and a calendar year, as well as their severity, may have. Determining the frequency and severity of natural disasters instead of just the area they covered would provide more insight into whether natural disasters have increased over time.
